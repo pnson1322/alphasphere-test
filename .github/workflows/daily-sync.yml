@@ -1,0 +1,51 @@
+name: Daily Support Docs Sync
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore sync state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/state.json
+            data/ids.json
+          # Cache entries are immutable, so this workflow saves a new entry per
+          # run while restoring by a fixed prefix. That keeps the latest
+          # non-hash-based sync state available without committing generated IDs.
+          key: optibot-sync-state-${{ github.run_id }}
+          restore-keys: |
+            optibot-sync-state-
+
+      - name: Ensure data directories exist
+        run: mkdir -p data/articles
+
+      - name: Build Docker image
+        run: docker build -t optibot-sync .
+
+      - name: Run daily sync
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/data:/app/data" \
+            -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            -e ZENDESK_SUBDOMAIN="${{ secrets.ZENDESK_SUBDOMAIN }}" \
+            -e MAX_ARTICLES_TO_UPLOAD="${{ vars.MAX_ARTICLES_TO_UPLOAD }}" \
+            optibot-sync
+
+      - name: Save sync state
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/state.json
+            data/ids.json
+          key: optibot-sync-state-${{ github.run_id }}
