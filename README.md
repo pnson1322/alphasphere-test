@@ -73,7 +73,7 @@ Required GitHub Secrets, under `Settings > Secrets and variables > Actions`:
 - `GEMINI_API_KEY`
 - `ZENDESK_SUBDOMAIN`
 
-View job logs: `https://github.com/<username>/<repo>/actions`
+View job logs: `https://github.com/pnson1322/alphasphere-test/actions`
 
 ## Chunking strategy
 
@@ -85,6 +85,6 @@ Gemini File Search handles chunking and embedding automatically as managed RAG, 
 
 ## Sample output
 
-[Screenshot placeholder - attach screenshot separately]
+![Sample OptiBot output](docs/sample-output.png)
 
 Example query: `"How do I add a YouTube video?"` -> correct answer with Article URL citations.
