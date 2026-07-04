@@ -1,126 +1,90 @@
-# Support Content Assistant
+# OptiBot Mini-Clone
 
-Scrapes Zendesk Help Center articles from OptiSigns, converts article bodies to Markdown, and uploads only new or changed documents to a Google Gemini File Search store for RAG-style support answers.
+This project scrapes OptiSigns support articles from the public Zendesk Help Center API, converts them to Markdown, uploads them to a Google Gemini File Search Store for RAG, and provides a small support chatbot test script (`query_assistant.py`) that answers questions grounded in those docs. It also includes a daily automated sync job that uploads only new or changed articles.
 
-## Folder Structure
+## Architecture
 
 ```text
-.
-|-- scraper/
-|   |-- __init__.py
-|   |-- zendesk_client.py
-|   |-- markdown_converter.py
-|   |-- frontmatter.py
-|   `-- state_tracker.py
-|-- uploader/
-|   |-- __init__.py
-|   `-- file_search_store.py
-|-- data/
-|   |-- articles/
-|   |-- ids.json
-|   `-- state.json
-|-- .github/workflows/daily-sync.yml
-|-- main.py
-|-- query_assistant.py
-|-- requirements.txt
-|-- Dockerfile
-`-- README.md
+Zendesk API -> Markdown files -> Gemini File Search Store -> query_assistant.py
+                                           |
+                                           `-> GitHub Actions daily delta sync
 ```
+
+## Tech stack
+
+- Python 3.x
+- `google-genai` SDK using Gemini File Search Tool for RAG
+- Zendesk Help Center API, public and unauthenticated
+- Docker for packaging
+- GitHub Actions for daily scheduling
 
 ## Setup
 
-Create and activate a virtual environment:
+1. Clone the repo.
+2. Create a virtual environment and install dependencies:
 
-```powershell
+```bash
 python -m venv venv
-.\venv\Scripts\Activate.ps1
-```
-
-Install dependencies:
-
-```powershell
+venv\Scripts\activate
+# Mac/Linux: source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create a local environment file:
-
-```powershell
-Copy-Item .env.sample .env
-```
-
-Then fill in `.env`:
+3. Copy `.env.sample` to `.env` and fill in:
 
 ```env
-GEMINI_API_KEY=
+GEMINI_API_KEY=<your key from https://aistudio.google.com/apikey>
 ZENDESK_SUBDOMAIN=support.optisigns.com
-MAX_ARTICLES_TO_UPLOAD=
 ```
 
-Set `MAX_ARTICLES_TO_UPLOAD` to a small number, such as `5`, for a test upload before running the full article set.
+## Run locally
 
-## Delta Sync
-
-`data/state.json` stores each article ID with its content hash, Markdown slug, and Gemini File Search document resource name. Each run:
-
-- Fetches all current Zendesk articles.
-- Hashes the raw article HTML body.
-- Classifies articles as added, updated, or skipped.
-- Deletes the previous Gemini document for updated articles.
-- Uploads only added and updated Markdown files.
-- Saves the new document names back to `data/state.json`.
-
-## Run Locally
-
-Run without Docker:
-
-```powershell
+```bash
 python main.py
 ```
 
-Run with Docker:
+Optional: set `MAX_ARTICLES_TO_UPLOAD` in `.env` to limit articles for testing.
 
-```powershell
-docker build -t optibot-sync .
-docker run --rm -e GEMINI_API_KEY=... -e ZENDESK_SUBDOMAIN=support.optisigns.com optibot-sync
-```
+## Test the assistant
 
-To persist `data/state.json` and `data/ids.json` across Docker runs, mount the local data directory:
-
-```powershell
-docker run --rm -v ${PWD}/data:/app/data -e GEMINI_API_KEY=... -e ZENDESK_SUBDOMAIN=support.optisigns.com optibot-sync
-```
-
-## Query OptiBot
-
-After `main.py` has uploaded at least one article, ask a test question:
-
-```powershell
+```bash
 python query_assistant.py "How do I add a YouTube video?"
 ```
 
-Gemini does not use a persistent Assistant object here. The OptiBot system prompt and File Search tool are passed on each `generate_content` call.
+## Run with Docker
 
-## GitHub Actions
+```bash
+docker build -t optibot-sync .
+docker run -v %cd%/data:/app/data -e GEMINI_API_KEY=... -e ZENDESK_SUBDOMAIN=... optibot-sync
+```
 
-The daily sync workflow is in `.github/workflows/daily-sync.yml`.
+Mounting `./data` persists `state.json` across runs for delta detection.
 
-Set repository secrets in GitHub:
+## Delta detection
 
-1. Open the repo on GitHub.
-2. Go to `Settings > Secrets and variables > Actions`.
-3. Add `GEMINI_API_KEY`.
-4. Add `ZENDESK_SUBDOMAIN` with `support.optisigns.com`.
+Each article's content hash is stored in `data/state.json`. On each run, articles are classified as `added`, `updated`, or `skipped` by comparing hashes. Only added or updated articles are uploaded. Updated articles have their old Gemini File Search document deleted first to avoid duplicates.
 
-The workflow runs daily at `03:00 UTC` and can also be triggered manually from the repo's `Actions` tab using `workflow_dispatch`. Job logs are available from the same `Actions` tab by opening a workflow run.
+## Daily automated job
 
-The workflow caches `data/state.json` and `data/ids.json` between runs so delta detection does not reset every day.
+The daily sync runs through `.github/workflows/daily-sync.yml`. It is scheduled once per day and can also be triggered manually with `workflow_dispatch`. It uses `actions/cache` for `data/state.json` and `data/ids.json` because GitHub Actions runners are ephemeral.
 
-## Modules
+Required GitHub Secrets, under `Settings > Secrets and variables > Actions`:
 
-- `scraper/zendesk_client.py`: fetches article data from the Zendesk Help Center API.
-- `scraper/markdown_converter.py`: converts Zendesk article HTML into clean Markdown files.
-- `scraper/frontmatter.py`: parses generated Markdown frontmatter for upload metadata.
-- `scraper/state_tracker.py`: loads state, computes content hashes, and classifies article deltas.
-- `uploader/file_search_store.py`: creates/reuses a Gemini File Search store, uploads Markdown files, and deletes stale documents.
-- `query_assistant.py`: sends manual test questions to Gemini using the uploaded File Search store.
-- `main.py`: orchestrates scrape, delta detection, conversion, upload, ID persistence, and logging.
+- `GEMINI_API_KEY`
+- `ZENDESK_SUBDOMAIN`
+
+View job logs: `https://github.com/<username>/<repo>/actions`
+
+## Chunking strategy
+
+Gemini File Search handles chunking and embedding automatically as managed RAG, so no manual chunk size configuration was needed. Each Markdown file includes YAML frontmatter with `title`, `url`, and `article_id`; the article URL is also preserved as `source_url` custom metadata during upload for source citation.
+
+## Known limitations
+
+- 1 out of 404 articles occasionally fails to upload due to a transient Gemini API error: `"Upload has already been terminated"`. The upload call is retried up to 3 times, and failed articles are retried on the next scheduled run because they are not marked complete in `data/state.json`.
+
+## Sample output
+
+[Screenshot placeholder - attach screenshot separately]
+
+Example query: `"How do I add a YouTube video?"` -> correct answer with Article URL citations.
